@@ -1,66 +1,90 @@
 package com.example.demo;
 
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
-// REST控制器：返回JSON数据，而非页面
 @RestController
-// 基础接口路径：所有该类下的接口都以 /api/users 开头
 @RequestMapping("/api/users")
 public class UserController {
 
-    // 模拟数据库存储用户数据（内存级，重启项目数据消失）
-    private Map<Long, User> userDB = new HashMap<>();
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
-    // 1. GET接口：根据ID查询用户
-    // 路径示例：http://localhost:8080/api/users/1
+    @GetMapping("/test")
+    public Result<String> test() {
+        return Result.success("服务正常运行");
+    }
+
     @GetMapping("/{id}")
-    public User getUserById(@PathVariable Long id) {
-        // 返回对应ID的用户，无数据则返回null
-        return userDB.get(id);
+    public Result<User> getUserById(@PathVariable Long id) {
+        List<Map<String, Object>> users = jdbcTemplate.queryForList(
+            "SELECT * FROM sys_user WHERE id = ?", id);
+        if (users.isEmpty()) {
+            return Result.error(ResultCode.USER_NOT_EXIST.getCode(), ResultCode.USER_NOT_EXIST.getMessage());
+        }
+        User user = mapToUser(users.get(0));
+        return Result.success(user);
     }
 
-    // 2. POST接口：新增用户
-    // 路径：http://localhost:8080/api/users
-    // 请求体示例：{"id":1,"name":"张三","age":20}
     @PostMapping
-    public String addUser(@RequestBody User user) {
-        // 校验用户是否已存在
-        if (userDB.containsKey(user.getId())) {
-            return "新增失败：用户ID已存在";
+    public Result<String> register(@RequestBody User user) {
+        List<Map<String, Object>> existingUsers = jdbcTemplate.queryForList(
+            "SELECT * FROM sys_user WHERE username = ?", user.getUsername());
+        if (!existingUsers.isEmpty()) {
+            return Result.error(ResultCode.USER_HAS_EXISTED.getCode(), ResultCode.USER_HAS_EXISTED.getMessage());
         }
-        // 保存用户到模拟数据库
-        userDB.put(user.getId(), user);
-        return "新增成功：用户" + user.getName() + "已添加";
+        jdbcTemplate.update(
+            "INSERT INTO sys_user (username, password, name, age) VALUES (?, ?, ?, ?)",
+            user.getUsername(), user.getPassword(), user.getName(), user.getAge());
+        return Result.success("注册成功");
     }
 
-    // 3. PUT接口：全量更新用户
-    // 路径示例：http://localhost:8080/api/users/1
-    // 请求体示例：{"name":"李四","age":22}
+    @PostMapping("/login")
+    public Result<String> login(@RequestBody User user) {
+        List<Map<String, Object>> users = jdbcTemplate.queryForList(
+            "SELECT * FROM sys_user WHERE username = ?", user.getUsername());
+        if (users.isEmpty()) {
+            return Result.error(ResultCode.USER_NOT_EXIST.getCode(), ResultCode.USER_NOT_EXIST.getMessage());
+        }
+        User existingUser = mapToUser(users.get(0));
+        if (!existingUser.getPassword().equals(user.getPassword())) {
+            return Result.error(ResultCode.PASSWORD_ERROR.getCode(), ResultCode.PASSWORD_ERROR.getMessage());
+        }
+        return Result.success("登录成功");
+    }
+
     @PutMapping("/{id}")
-    public String updateUser(@PathVariable Long id, @RequestBody User user) {
-        // 校验用户是否存在
-        if (!userDB.containsKey(id)) {
-            return "更新失败：用户ID不存在";
+    public Result<String> updateUser(@PathVariable Long id, @RequestBody User user) {
+        int rows = jdbcTemplate.update(
+            "UPDATE sys_user SET username = ?, password = ?, name = ?, age = ? WHERE id = ?",
+            user.getUsername(), user.getPassword(), user.getName(), user.getAge(), id);
+        if (rows == 0) {
+            return Result.error(ResultCode.USER_NOT_EXIST.getCode(), ResultCode.USER_NOT_EXIST.getMessage());
         }
-        // 保证更新的ID与路径ID一致（全量更新）
-        user.setId(id);
-        userDB.put(id, user);
-        return "更新成功：用户ID=" + id + "已更新";
+        return Result.success("更新成功");
     }
 
-    // 4. DELETE接口：删除用户
-    // 路径示例：http://localhost:8080/api/users/1
     @DeleteMapping("/{id}")
-    public String deleteUser(@PathVariable Long id) {
-        // 校验用户是否存在
-        if (!userDB.containsKey(id)) {
-            return "删除失败：用户ID不存在";
+    public Result<String> deleteUser(@PathVariable Long id) {
+        int rows = jdbcTemplate.update("DELETE FROM sys_user WHERE id = ?", id);
+        if (rows == 0) {
+            return Result.error(ResultCode.USER_NOT_EXIST.getCode(), ResultCode.USER_NOT_EXIST.getMessage());
         }
-        // 从模拟数据库删除用户
-        userDB.remove(id);
-        return "删除成功：用户ID=" + id + "已删除";
+        return Result.success("删除成功");
+    }
+
+    private User mapToUser(Map<String, Object> map) {
+        User user = new User();
+        user.setId(((Number) map.get("id")).longValue());
+        user.setUsername((String) map.get("username"));
+        user.setPassword((String) map.get("password"));
+        user.setName((String) map.get("name"));
+        Object age = map.get("age");
+        user.setAge(age != null ? ((Number) age).intValue() : null);
+        return user;
     }
 }
